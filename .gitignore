@@ -1,0 +1,29 @@
+# Secrets and local configuration
+config/config.yaml
+.env
+*.pem
+*.key
+
+# Build output
+dist/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Runtime data (SQLite)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.db.bak
+
+# Logs
+*.log
+logs/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/

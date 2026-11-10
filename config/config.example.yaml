@@ -1,0 +1,44 @@
+# NodeNotificationsBot — v0.1 configuration example
+#
+# Copy to config/config.yaml (git-ignored) and adjust. Secrets can also be
+# supplied through environment variables (see README):
+#   TELEGRAM_BOT_TOKEN, BITCOIN_RPC_USER, BITCOIN_RPC_PASSWORD,
+#   BITCOIN_RPC_URL, STORAGE_PATH, CONFIG_PATH, LOG_LEVEL
+
+telegram:
+  botToken: "123456:ABC..."          # or env TELEGRAM_BOT_TOKEN
+  adminChatIds: [11111111]           # optional: receives service alerts
+
+bitcoin:
+  network: signet                   # mainnet | testnet | signet | regtest
+  rpc:
+    url: "http://127.0.0.1:8332"
+    # Generate the pair with: npm run rpc:auth -- nodenotificationsbot
+    # bitcoin.conf (server side):
+    #   rpcauth=nodenotificationsbot:<salt>$<hash>
+    #   rpcwhitelist=nodenotificationsbot:getblockchaininfo,getnetworkinfo,getblockheader,getchainstates
+    #   rpcwhitelistdefault=0
+    user: "nodenotificationsbot"
+    password: "REPLACE_WITH_RPCAUTH_PASSWORD"
+    timeoutMs: 5000
+
+storage:
+  driver: sqlite                  # SQLite is the only storage backend
+  path: "/var/lib/nodenotificationsbot/bot.db"
+
+ibdMonitor:
+  enabled: true
+  sampleIntervalSeconds: 60         # shared RPC sampling loop
+  defaultProgressStepPercent: 10    # /ibd watch default: notify every +10%
+  minProgressStepPercent: 1
+  maxProgressStepPercent: 50
+  heartbeatMinutes: 0               # 0 = progress-triggered only; >0 = max silence
+  stallMinutes: 15                  # still in IBD, no new blocks -> stall alert
+  reorgTolerance: 12                # blocks decrease beyond this -> regressed/reindex
+  unreachableAlertAfterMinutes: 5
+  minAlertIntervalSeconds: 300      # debounce for state-change messages
+  stopAfterSyncMinutes: 60          # 0 = keep subscription after IBD completes
+  maxSubscriptions: 5               # server-wide cap on active subscriptions
+  allowedChatIds: ["*"]             # "*" = every bot user (public); empty = adminChatIds only
+  speedWindowMinutes: 15            # ETA/ speed calculation window
+  commandThrottleSeconds: 3         # per-chat command cooldown for /ibd

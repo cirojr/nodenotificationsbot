@@ -1,0 +1,36 @@
+[Unit]
+Description=NodeNotificationsBot (Bitcoin Core IBD monitor)
+Documentation=https://github.com/your-org/nodenotificationsbot
+After=network-online.target bitcoind.service
+Wants=network-online.target bitcoind.service
+# Not Requires=: stopping bitcoind must not stop the bot (we report the outage).
+
+[Service]
+Type=simple
+User=nodenotificationsbot
+Group=nodenotificationsbot
+WorkingDirectory=/opt/nodenotificationsbot
+EnvironmentFile=-/etc/nodenotificationsbot/env
+Environment=CONFIG_PATH=/etc/nodenotificationsbot/config.yaml
+ExecStart=/usr/bin/node /opt/nodenotificationsbot/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+# Store the SQLite database under /var/lib/nodenotificationsbot (StateDirectory).
+StateDirectory=nodenotificationsbot
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+# RPC auth uses a dedicated rpcauth user (see README):
+#   rpcauth=nodenotificationsbot:<salt>$<hash>
+#   rpcwhitelist=nodenotificationsbot:getblockchaininfo,getnetworkinfo,getblockheader,getchainstates
+#   rpcwhitelistdefault=0
+# The plaintext password lives in EnvironmentFile above, not in bitcoin.conf.
+# Never expose RPC port 8332 to the network.
+
+[Install]
+WantedBy=multi-user.target
