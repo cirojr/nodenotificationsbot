@@ -276,7 +276,6 @@ CREATE TABLE node_monitor_subscriptions (
   last_state            TEXT NOT NULL DEFAULT 'unknown'
                           CHECK (last_state IN ('unknown','ibd','synced','stalled','regressed','unreachable')),
   last_sent_progress    DOUBLE PRECISION,
-  last_progress_bucket  INTEGER,
   last_sent_at          TIMESTAMPTZ,
   last_alert_at         TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),

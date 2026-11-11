@@ -40,6 +40,14 @@ const MIGRATIONS: Migration[] = [
         ON node_monitor_subscriptions (active) WHERE active = 1;
     `,
   },
+  {
+    version: 2,
+    name: 'drop_last_progress_bucket',
+    sql: `
+      ALTER TABLE node_monitor_subscriptions
+        DROP COLUMN last_progress_bucket;
+    `,
+  },
 ];
 
 export function openSqlite(path: string, logger: Logger): SqliteDatabase {

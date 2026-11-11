@@ -16,7 +16,7 @@ import {
   formatStall,
   formatUnreachable,
 } from '../telegram/ibdMessages';
-import {estimateEtaMinutes, progressBucket, SpeedTracker} from './progress';
+import {estimateEtaMinutes, shouldSendProgress, SpeedTracker} from './progress';
 import type {NodeMonitorSubscriptionRepo, Subscription} from '../storage';
 
 export type SendResult =
@@ -45,7 +45,6 @@ export interface IbdMonitorDeps {
   sender: MessageSender;
   config: IbdMonitorConfig;
   logger: Logger;
-  adminChatIds?: number[];
   /** Human label for the RPC endpoint used in "unreachable" messages. */
   rpcUrl: string;
   /** Injectable clock (ms) for tests. */
@@ -91,13 +90,11 @@ export class IbdMonitor {
   private readonly sender: MessageSender;
   private readonly config: IbdMonitorConfig;
   private readonly logger: Logger;
-  private readonly adminChatIds: number[];
   private readonly rpcLabel: string;
   private readonly now: () => number;
   private readonly cacheTtlMs: number;
   private readonly speedTracker: SpeedTracker;
   private readonly runtime = new Map<number, RuntimeState>();
-  private readonly startedAt: number;
 
   private timer: NodeJS.Timeout | null = null;
   private activeTick: Promise<void> | null = null;
@@ -108,20 +105,15 @@ export class IbdMonitor {
   private previousSample: NodeSample | null = null;
   private sampleInFlight: Promise<NodeSample> | null = null;
 
-  private lastSuccessAt: number | null = null;
-  private adminUnreachableAlerted = false;
-
   constructor(deps: IbdMonitorDeps) {
     this.repo = deps.repo;
     this.sampler = deps.sampler;
     this.sender = deps.sender;
     this.config = deps.config;
     this.logger = deps.logger;
-    this.adminChatIds = deps.adminChatIds ?? [];
     this.rpcLabel = rpcEndpointLabel(deps.rpcUrl);
     this.now = deps.now ?? Date.now;
     this.cacheTtlMs = deps.sampleCacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
-    this.startedAt = this.now();
     this.speedTracker = new SpeedTracker({
       windowMinutes: deps.config.speedWindowMinutes,
       now: this.now,
@@ -313,7 +305,6 @@ export class IbdMonitor {
       }
       this.repo.update(chatId, {
         lastState: synced ? 'synced' : 'ibd',
-        lastProgressBucket: progressBucket(sample.progressPercent, step),
         lastSentProgress: sample.progressPercent,
         lastSentAt: this.iso(now),
         lastAlertAt: this.iso(now),
@@ -350,7 +341,6 @@ export class IbdMonitor {
         if (result.ok) {
           this.repo.update(chatId, {
             lastState: 'regressed',
-            lastProgressBucket: progressBucket(sample.progressPercent, step),
             lastSentProgress: sample.progressPercent,
             lastAlertAt: this.iso(now),
           });
@@ -380,7 +370,6 @@ export class IbdMonitor {
         if (result.ok) {
           this.repo.update(chatId, {
             lastState: 'synced',
-            lastProgressBucket: progressBucket(sample.progressPercent, step),
             lastSentProgress: sample.progressPercent,
             lastSentAt: this.iso(now),
             lastAlertAt: this.iso(now),
@@ -451,7 +440,6 @@ export class IbdMonitor {
     ) {
       this.repo.update(chatId, {
         lastState: 'ibd',
-        lastProgressBucket: progressBucket(sample.progressPercent, step),
         lastSentProgress: sample.progressPercent,
       });
       this.logger.info(
@@ -461,11 +449,13 @@ export class IbdMonitor {
       return;
     }
 
-    // 6. Percentage-bucket trigger. A multi-bucket jump sends one message.
-    const bucket = progressBucket(sample.progressPercent, step);
+    // 6. Percentage-step trigger. A multi-step jump sends one message.
     if (
-      subscription.lastProgressBucket === null ||
-      bucket > subscription.lastProgressBucket
+      shouldSendProgress(
+        subscription.lastSentProgress,
+        sample.progressPercent,
+        step,
+      )
     ) {
       const result = await this.sendMessage(
         chatId,
@@ -473,7 +463,6 @@ export class IbdMonitor {
       );
       if (result.ok) {
         this.repo.update(chatId, {
-          lastProgressBucket: bucket,
           lastSentProgress: sample.progressPercent,
           lastSentAt: this.iso(now),
         });
@@ -483,7 +472,6 @@ export class IbdMonitor {
             blocks: sample.blocks,
             headers: sample.headers,
             progress: Number(sample.progressPercent.toFixed(3)),
-            bucket,
             step,
           },
           'sent IBD progress update',
@@ -495,8 +483,11 @@ export class IbdMonitor {
     }
 
     // Progress moved backwards (e.g. restart/reindex): reset the baseline.
-    if (bucket < subscription.lastProgressBucket) {
-      this.repo.update(chatId, {lastProgressBucket: bucket});
+    if (
+      subscription.lastSentProgress !== null &&
+      sample.progressPercent < subscription.lastSentProgress
+    ) {
+      this.repo.update(chatId, {lastSentProgress: sample.progressPercent});
     }
 
     // Optional time-based heartbeat; default 0 keeps this purely progress-driven.
@@ -594,22 +585,6 @@ export class IbdMonitor {
       'IBD sample failed; node appears unreachable',
     );
 
-    const unreachableSince = this.lastSuccessAt ?? this.startedAt;
-    const adminAlertMs = Math.min(
-      3 * this.config.sampleIntervalSeconds * 1_000,
-      this.config.unreachableAlertAfterMinutes * 60_000,
-    );
-    if (
-      now - unreachableSince >= adminAlertMs &&
-      !this.adminUnreachableAlerted
-    ) {
-      this.adminUnreachableAlerted = true;
-      const minutes = Math.round((now - unreachableSince) / 60_000);
-      await this.sendAdmins(
-        `⚠️ <b>IBD monitor:</b> RPC has been unreachable for ${minutes} min.\n<pre>${escapeHtml(safeError)}</pre>`,
-      );
-    }
-
     for (const subscription of this.repo.listActive()) {
       const runtime = this.runtimeFor(subscription.telegramChatId, now);
       runtime.unreachableSince ??= now;
@@ -657,7 +632,6 @@ export class IbdMonitor {
   private recordSuccessfulSample(sample: NodeSample, now: number): void {
     this.cached = {sample, at: now};
     this.speedTracker.add(sample.blocks, now);
-    this.lastSuccessAt = now;
     this.logger.debug(
       {
         blocks: sample.blocks,
@@ -668,30 +642,6 @@ export class IbdMonitor {
       },
       'IBD sample',
     );
-
-    if (this.adminUnreachableAlerted) {
-      this.adminUnreachableAlerted = false;
-      void this.sendAdmins('✅ <b>IBD monitor:</b> RPC is reachable again.');
-    }
-  }
-
-  private async sendAdmins(html: string): Promise<void> {
-    for (const chatId of this.adminChatIds) {
-      try {
-        const result = await this.sender.send(chatId, html);
-        if (!result.ok) {
-          this.logger.warn(
-            {chatId, error: result.error},
-            'failed to send admin alert',
-          );
-        }
-      } catch (error) {
-        this.logger.warn(
-          {chatId, error: sanitizeRpcError(error)},
-          'failed to send admin alert',
-        );
-      }
-    }
   }
 
   private async sendMessage(chatId: number, html: string): Promise<SendResult> {
@@ -772,9 +722,6 @@ export class IbdMonitor {
 
   isChatAllowed(chatId: number): boolean {
     const allowed = this.config.allowedChatIds;
-    if (allowed.length === 0) {
-      return this.adminChatIds.includes(chatId);
-    }
     if (allowed.some(entry => entry === '*')) {
       return true;
     }
@@ -855,7 +802,6 @@ export class IbdMonitor {
       );
       this.repo.update(chatId, {
         lastState: 'unreachable',
-        lastProgressBucket: null,
         lastSentProgress: null,
         ...(result.ok
           ? {lastAlertAt: this.iso(now), lastSentAt: this.iso(now)}
@@ -869,7 +815,6 @@ export class IbdMonitor {
     }
 
     const synced = isNodeSynced(sample);
-    const bucket = progressBucket(sample.progressPercent, step);
     const speed = this.speedTracker.speedBlocksPerMinute(now);
     const message = formatSnapshot(sample, {
       stepPercent: step,
@@ -890,7 +835,6 @@ export class IbdMonitor {
           ? 'synced'
           : 'ibd'
         : (existing?.lastState ?? 'unknown'),
-      lastProgressBucket: result.ok ? bucket : null,
       lastSentProgress: result.ok ? sample.progressPercent : null,
       ...(result.ok ? {lastSentAt: this.iso(now)} : {}),
     });

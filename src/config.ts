@@ -90,7 +90,6 @@ export const configSchema = z.object({
         token => token !== '123456:ABC...',
         'replace the placeholder bot token',
       ),
-    adminChatIds: z.array(z.number().int()).default([]),
   }),
   bitcoin: z.object({
     network: networkSchema.default('mainnet'),

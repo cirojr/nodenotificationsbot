@@ -6,8 +6,6 @@ methods (`getblockchaininfo`, `getnetworkinfo`, `getblockheader`, optional
 `getchainstates`), persists subscriptions in SQLite, and sends percentage-triggered
 Telegram updates.
 
-Not in v0.1: ZMQ, tx watching, `txindex`, PostgreSQL. Those are v0.2 (see `PLAN.md`).
-
 ## Commands
 
 | Command | Description |
@@ -134,11 +132,11 @@ Important settings (`ibdMonitor`):
 | `heartbeatMinutes` | `0` | `0` = purely progress-driven |
 | `stallMinutes` | `15` | No blocks/headers (or zero peers) for this long → stall alert |
 | `reorgTolerance` | `12` | Height drop above this → regressed/reindex alert |
-| `unreachableAlertAfterMinutes` | `5` | RPC failure duration before the user/admin alert |
+| `unreachableAlertAfterMinutes` | `5` | RPC failure duration before the subscriber alert |
 | `minAlertIntervalSeconds` | `300` | State-change message debounce (completion is immediate) |
 | `stopAfterSyncMinutes` | `60` | Auto-stop a synced subscription; `0` keeps it |
 | `maxSubscriptions` | `5` | Server-wide cap on active subscriptions |
-| `allowedChatIds` | `["*"]` | `"*"` = public; empty = `adminChatIds` only |
+| `allowedChatIds` | `["*"]` | `"*"` = public; empty = nobody allowed |
 | `speedWindowMinutes` | `15` | Speed/ETA averaging window |
 | `commandThrottleSeconds` | `3` | Per-chat cooldown for `/ibd` (except `/ibd stop`) |
 
@@ -199,9 +197,9 @@ Stop the service before restoring the DB file.
 
 1. `/ibd` matches `bitcoin-cli getblockchaininfo` (`blocks`, `headers`,
    `verificationprogress`, `initialblockdownload`).
-2. `/ibd watch 5` creates a row, sends a snapshot, and `last_progress_bucket` is set
+2. `/ibd watch 5` creates a row, sends a snapshot, and `last_sent_progress` is set
    after one tick.
-3. Wait for a bucket crossing; confirm HTML `<pre>` alignment, grouped numbers and UTC
+3. Wait for a step crossing; confirm HTML `<pre>` alignment, grouped numbers and UTC
    timestamps.
 4. `/ibd stop` sets `active = false` and stops messages.
 5. Failure drill: stop `bitcoind`; `/ibd` replies "node unreachable" without crashing;
@@ -219,7 +217,7 @@ npm run build
 ```
 
 Test coverage includes: config validation/env overrides, rpcauth generation and
-parsing, progress buckets and ETA math, speed ring buffer, RPC
+parsing, progress-step and ETA math, speed ring buffer, RPC
 auth/timeouts/error mapping, SQLite storage, snapshot/event formatting (HTML
 escaping, fresh node, synced, assumeutxo), and the monitor state machine with a
 fake clock, fake RPC sampler and mocked Telegram sender.
@@ -238,16 +236,11 @@ testnet, `18443` for regtest). Then start the bot with `npm run dev`.
 
 ## Security notes
 
-- The old hard-coded bot token was removed with the v0.1 rewrite. If the repository
-  history ever contained a real token, revoke it in @BotFather (`/revoke`) and issue a
-  new one; keep it only in `config/config.yaml` or `TELEGRAM_BOT_TOKEN`.
-- `.gitignore` excludes `config/config.yaml`, `.env`, `dist/`, and runtime DB files.
 - RPC stays on loopback; the bot uses a dedicated `rpcauth` user (optionally
   method-restricted with `rpcwhitelist`). Errors forwarded to Telegram are
   sanitized and credentials are never logged.
 - The monitor is not an RPC proxy: no method names or parameters come from Telegram.
   `allowedChatIds`, the per-chat throttle and `maxSubscriptions` are the abuse controls.
-- Only the chat id and IBD subscription settings are stored in v0.1.
 
 ## Troubleshooting
 

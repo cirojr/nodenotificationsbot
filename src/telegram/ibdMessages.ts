@@ -1,9 +1,5 @@
 import {isNodeSynced, type NodeSample} from '../bitcoin/nodeStatus';
-import {
-  formatEta,
-  nextProgressPercent,
-  progressBucket,
-} from '../services/progress';
+import {formatEta, nextProgressPercent} from '../services/progress';
 
 const integerFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
@@ -333,7 +329,6 @@ export function formatMonitorStatus(
   sample: NodeSample,
 ): string {
   const step = subscription.progressStepPercent;
-  const bucket = progressBucket(sample.progressPercent, step);
   const next = nextProgressPercent(sample.progressPercent, step);
   const lastSent = subscription.lastSentAt
     ? utcTimestamp(new Date(subscription.lastSentAt))
@@ -347,7 +342,7 @@ export function formatMonitorStatus(
     `Step         every ${step}%`,
     `Last state   ${subscription.lastState}`,
     `Last sent    ${lastSent}${lastProgress}`,
-    `Progress     ${formatProgress(sample.progressPercent)}  (bucket ${bucket})`,
+    `Progress     ${formatProgress(sample.progressPercent)}`,
     `Next update  ${next === null ? '—  (waiting for completion)' : `at ${next.toFixed(1)}%`}`,
   ];
   return `📊 IBD monitor subscription\n\n<pre>\n${lines.join('\n')}\n</pre>`;

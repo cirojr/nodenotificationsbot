@@ -3,34 +3,28 @@ import {
   estimateEtaMinutes,
   formatEta,
   nextProgressPercent,
-  progressBucket,
   shouldSendProgress,
   SpeedTracker,
 } from '../../src/services/progress';
 
-describe('progress buckets', () => {
-  it('floors progress into step buckets', () => {
-    expect(progressBucket(9.99, 10)).toBe(0);
-    expect(progressBucket(10, 10)).toBe(1);
-    expect(progressBucket(10.01, 10)).toBe(1);
-    expect(progressBucket(100, 10)).toBe(10);
-    expect(progressBucket(-5, 10)).toBe(0);
-    expect(progressBucket(120, 10)).toBe(10);
-  });
-
+describe('progress steps', () => {
   it('computes the next notification percentage', () => {
     expect(nextProgressPercent(9.5, 10)).toBe(10);
     expect(nextProgressPercent(88.7, 10)).toBe(90);
     expect(nextProgressPercent(34, 10)).toBe(40);
     expect(nextProgressPercent(99.5, 10)).toBe(100);
     expect(nextProgressPercent(100, 10)).toBeNull();
+    expect(nextProgressPercent(-5, 10)).toBe(10);
+    expect(nextProgressPercent(120, 10)).toBeNull();
   });
 
-  it('sends on the first sample and when the bucket advances', () => {
-    expect(shouldSendProgress(null, 0)).toBe(true);
-    expect(shouldSendProgress(0, 1)).toBe(true);
-    expect(shouldSendProgress(1, 1)).toBe(false);
-    expect(shouldSendProgress(5, 4)).toBe(false);
+  it('sends on the first sample and when the next step is reached', () => {
+    expect(shouldSendProgress(null, 0, 10)).toBe(true);
+    expect(shouldSendProgress(9.5, 10, 10)).toBe(true);
+    expect(shouldSendProgress(10, 10.5, 10)).toBe(false);
+    expect(shouldSendProgress(10, 20, 10)).toBe(true);
+    expect(shouldSendProgress(34, 56, 10)).toBe(true);
+    expect(shouldSendProgress(100, 100, 10)).toBe(false);
   });
 });
 

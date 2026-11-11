@@ -160,7 +160,7 @@ describe('sampleNode', () => {
     expect(sample.assumeUtxo?.snapshotBlockHash).toBe('a'.repeat(64));
   });
 
-  it('clamps non-finite verificationprogress for bucketing but keeps it for display decisions', async () => {
+  it('clamps non-finite verificationprogress for progress tracking but keeps it for display decisions', async () => {
     const rpc = new FakeRpc();
     rpc.info = {...blockchainInfo, verificationprogress: Number.NaN};
 

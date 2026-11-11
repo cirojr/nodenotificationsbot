@@ -5,31 +5,30 @@ export function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
-/** floor(progress / step); step is always >= 1 after validation. */
-export function progressBucket(
-  progressPercent: number,
-  stepPercent: number,
-): number {
-  const step = stepPercent > 0 ? stepPercent : 1;
-  return Math.floor(clampPercent(progressPercent) / step);
-}
-
 /** The next percentage that will trigger an update, or null at 100%. */
 export function nextProgressPercent(
   progressPercent: number,
   stepPercent: number,
 ): number | null {
   const step = stepPercent > 0 ? stepPercent : 1;
-  const next = (progressBucket(progressPercent, step) + 1) * step;
+  const next = (Math.floor(clampPercent(progressPercent) / step) + 1) * step;
   return next <= 100 ? next : null;
 }
 
-/** True when progress crossed into a later bucket (a multi-bucket jump sends once). */
+/**
+ * True when the next step threshold after `lastProgressPercent` was reached.
+ * A multi-step jump sends once.
+ */
 export function shouldSendProgress(
-  lastBucket: number | null,
-  currentBucket: number,
+  lastProgressPercent: number | null,
+  currentProgressPercent: number,
+  stepPercent: number,
 ): boolean {
-  return lastBucket === null || currentBucket > lastBucket;
+  if (lastProgressPercent === null) {
+    return true;
+  }
+  const next = nextProgressPercent(lastProgressPercent, stepPercent);
+  return next !== null && clampPercent(currentProgressPercent) >= next;
 }
 
 export interface SpeedTrackerOptions {

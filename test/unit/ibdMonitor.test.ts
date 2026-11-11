@@ -12,9 +12,7 @@ import {
   testConfig,
 } from '../helpers';
 
-function setup(
-  options: {config?: Partial<IbdMonitorConfig>; adminChatIds?: number[]} = {},
-) {
+function setup(options: {config?: Partial<IbdMonitorConfig>} = {}) {
   const clock = new FakeClock();
   const repo = memoryRepo();
   const sampler = new FakeSampler();
@@ -26,7 +24,6 @@ function setup(
     sender,
     config,
     logger: silentLogger,
-    adminChatIds: options.adminChatIds ?? [],
     rpcUrl: 'http://127.0.0.1:8332',
     now: clock.now,
   });
@@ -44,7 +41,7 @@ function setup(
 }
 
 describe('IbdMonitor subscriptions', () => {
-  it('sends an immediate snapshot and records the baseline bucket', async () => {
+  it('sends an immediate snapshot and records the progress baseline', async () => {
     const {monitor, sampler, sender, repo, subscribe} = setup();
 
     await subscribe(1, {progressPercent: 9.5, verificationProgress: 0.095}, 10);
@@ -54,9 +51,9 @@ describe('IbdMonitor subscriptions', () => {
     const subscription = repo.getByChatId(1);
     expect(subscription?.active).toBe(true);
     expect(subscription?.lastState).toBe('ibd');
-    expect(subscription?.lastProgressBucket).toBe(0);
+    expect(subscription?.lastSentProgress).toBeCloseTo(9.5, 3);
 
-    // 9.5% -> 10.0% crosses the first bucket for step=10.
+    // 9.5% -> 10.0% reaches the next step for step=10.
     sampler.push(makeSample({progressPercent: 10, verificationProgress: 0.1}));
     await monitor.tick();
 
@@ -64,15 +61,15 @@ describe('IbdMonitor subscriptions', () => {
     expect(sender.last()?.html).toContain(
       'Progress     10.0%  (step: every 10%)',
     );
-    expect(repo.getByChatId(1)?.lastProgressBucket).toBe(1);
+    expect(repo.getByChatId(1)?.lastSentProgress).toBeCloseTo(10, 3);
 
-    // Same bucket -> no message.
+    // Same step -> no message.
     sampler.push(makeSample({progressPercent: 10, verificationProgress: 0.1}));
     await monitor.tick();
     expect(sender.messages).toHaveLength(2);
   });
 
-  it('sends one message when progress jumps several buckets', async () => {
+  it('sends one message when progress jumps several steps', async () => {
     const {monitor, sampler, sender, repo, subscribe} = setup();
     await subscribe(1, {progressPercent: 34, verificationProgress: 0.34}, 10);
 
@@ -81,7 +78,7 @@ describe('IbdMonitor subscriptions', () => {
 
     expect(sender.messages).toHaveLength(2);
     expect(sender.last()?.html).toContain('Progress     56.0%');
-    expect(repo.getByChatId(1)?.lastProgressBucket).toBe(5);
+    expect(repo.getByChatId(1)?.lastSentProgress).toBeCloseTo(56, 3);
 
     sampler.push(makeSample({progressPercent: 60, verificationProgress: 0.6}));
     await monitor.tick();
@@ -119,7 +116,7 @@ describe('IbdMonitor subscriptions', () => {
     });
   });
 
-  it('enforces allowedChatIds, falling back to admins when empty', async () => {
+  it('enforces allowedChatIds and allows nobody when the list is empty', async () => {
     const restricted = setup({config: {allowedChatIds: [1]}});
     await expect(restricted.monitor.subscribe(2, 10)).rejects.toMatchObject({
       code: 'not_allowed',
@@ -128,9 +125,12 @@ describe('IbdMonitor subscriptions', () => {
       telegramChatId: 1,
     });
 
-    const adminOnly = setup({config: {allowedChatIds: []}, adminChatIds: [9]});
-    expect(adminOnly.monitor.isChatAllowed(9)).toBe(true);
-    expect(adminOnly.monitor.isChatAllowed(1)).toBe(false);
+    const closed = setup({config: {allowedChatIds: []}});
+    expect(closed.monitor.isChatAllowed(9)).toBe(false);
+    expect(closed.monitor.isChatAllowed(1)).toBe(false);
+    await expect(closed.monitor.subscribe(1, 10)).rejects.toMatchObject({
+      code: 'not_allowed',
+    });
   });
 
   it('rejects new subscriptions but still allows unsubscribe when disabled', async () => {
@@ -225,7 +225,7 @@ describe('IbdMonitor state machine', () => {
     expect(repo.getByChatId(1)?.lastState).toBe('ibd');
     expect(sender.messages).toHaveLength(2);
 
-    // A later bucket crossing is sent again.
+    // A later step crossing is sent again.
     clock.advance(60_000);
     sampler.push({
       ...base,
@@ -301,29 +301,13 @@ describe('IbdMonitor state machine', () => {
     expect(repo.getByChatId(1)?.lastState).toBe('ibd');
   });
 
-  it('alerts admins when sampling has been failing for 3x the interval', async () => {
-    const {monitor, sampler, sender, clock, subscribe} = setup({
-      adminChatIds: [9],
-    });
-    await subscribe(1, {});
-
-    clock.advance(3 * 60_000);
-    sampler.push(new Error('connect ECONNREFUSED'));
-    await monitor.tick();
-
-    expect(sender.messages).toHaveLength(2);
-    expect(sender.last()?.chatId).toBe(9);
-    expect(sender.last()?.html).toContain('RPC has been unreachable');
-  });
-
-  it('does not duplicate completion or a crossed bucket across restarts', async () => {
+  it('does not duplicate completion or a step update across restarts', async () => {
     const {monitor, repo, sampler, sender} = setup();
     const nowIso = new Date().toISOString();
 
     repo.create(1, 10);
     repo.update(1, {
       lastState: 'ibd',
-      lastProgressBucket: 8,
       lastSentProgress: 88.73,
       lastSentAt: nowIso,
     });

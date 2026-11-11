@@ -88,7 +88,6 @@ async function main(): Promise<void> {
     sender,
     config: config.ibdMonitor,
     logger,
-    adminChatIds: config.telegram.adminChatIds,
     rpcUrl: config.bitcoin.rpc.url,
   });
 

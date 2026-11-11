@@ -25,7 +25,6 @@ describe('SQLite storage', () => {
 
     first.repo.update(42, {
       lastState: 'ibd',
-      lastProgressBucket: 8,
       lastSentProgress: 88.73,
       lastSentAt: '2026-11-08T14:07:31.000Z',
     });
@@ -37,7 +36,6 @@ describe('SQLite storage', () => {
     const loaded = second.repo.getByChatId(42);
     expect(loaded).not.toBeNull();
     expect(loaded?.lastState).toBe('ibd');
-    expect(loaded?.lastProgressBucket).toBe(8);
     expect(loaded?.lastSentProgress).toBeCloseTo(88.73);
     expect(loaded?.lastSentAt).toBe('2026-11-08T14:07:31.000Z');
 
@@ -45,6 +43,12 @@ describe('SQLite storage', () => {
     const db = openSqlite(path, silentLogger);
     expect(Number(db.pragma('user_version', {simple: true}))).toBe(
       latestMigrationVersion(),
+    );
+    const columns = db
+      .prepare('PRAGMA table_info(node_monitor_subscriptions)')
+      .all() as Array<{name: string}>;
+    expect(columns.map(column => column.name)).not.toContain(
+      'last_progress_bucket',
     );
     db.close();
     second.close();

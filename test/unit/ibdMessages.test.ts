@@ -253,6 +253,7 @@ describe('event messages', () => {
     expect(message).toContain('Step         every 10%');
     expect(message).toContain('Last state   ibd');
     expect(message).toContain('Next update  at 90.0%');
+    expect(message).not.toContain('bucket');
     expect(message).toContain('2026-11-08 14:07:31 UTC');
   });
 });

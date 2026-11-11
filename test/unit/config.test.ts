@@ -11,7 +11,6 @@ function tempDir(): string {
 const validYaml = `
 telegram:
   botToken: "123456:FROMFILE"
-  adminChatIds: [111]
 bitcoin:
   network: regtest
   rpc:
@@ -35,7 +34,6 @@ describe('loadConfig', () => {
     const config = loadConfig({path, env: {}});
 
     expect(config.telegram.botToken).toBe('123456:FROMFILE');
-    expect(config.telegram.adminChatIds).toEqual([111]);
     expect(config.bitcoin.network).toBe('regtest');
     expect(config.bitcoin.rpc.timeoutMs).toBe(5000);
     expect(config.storage).toEqual({driver: 'sqlite', path: 'data/test.db'});
@@ -70,19 +68,25 @@ describe('loadConfig', () => {
   });
 
   it('supports env-only configuration when no config file exists', () => {
-    const config = loadConfig({
-      env: {
-        TELEGRAM_BOT_TOKEN: '123:ENVONLY',
-        BITCOIN_RPC_USER: 'envuser',
-        BITCOIN_RPC_PASSWORD: 'envpass',
-      },
-    });
+    const cwd = process.cwd();
+    process.chdir(tempDir());
+    try {
+      const config = loadConfig({
+        env: {
+          TELEGRAM_BOT_TOKEN: '123:ENVONLY',
+          BITCOIN_RPC_USER: 'envuser',
+          BITCOIN_RPC_PASSWORD: 'envpass',
+        },
+      });
 
-    expect(config.telegram.botToken).toBe('123:ENVONLY');
-    expect(config.bitcoin.network).toBe('mainnet');
-    expect(config.storage.driver).toBe('sqlite');
-    expect(config.bitcoin.rpc.user).toBe('envuser');
-    expect(config.bitcoin.rpc.password).toBe('envpass');
+      expect(config.telegram.botToken).toBe('123:ENVONLY');
+      expect(config.bitcoin.network).toBe('mainnet');
+      expect(config.storage.driver).toBe('sqlite');
+      expect(config.bitcoin.rpc.user).toBe('envuser');
+      expect(config.bitcoin.rpc.password).toBe('envpass');
+    } finally {
+      process.chdir(cwd);
+    }
   });
 
   it('requires RPC auth', () => {

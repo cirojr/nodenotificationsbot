@@ -20,7 +20,6 @@ export interface Subscription {
   active: boolean;
   lastState: MonitorState;
   lastSentProgress: number | null;
-  lastProgressBucket: number | null;
   lastSentAt: string | null;
   lastAlertAt: string | null;
   createdAt: string;
@@ -32,7 +31,6 @@ export interface SubscriptionPatch {
   active?: boolean;
   lastState?: MonitorState;
   lastSentProgress?: number | null;
-  lastProgressBucket?: number | null;
   lastSentAt?: string | null;
   lastAlertAt?: string | null;
 }

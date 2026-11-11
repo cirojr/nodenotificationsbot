@@ -15,7 +15,6 @@ interface SubscriptionRow {
   active: number;
   last_state: string;
   last_sent_progress: number | null;
-  last_progress_bucket: number | null;
   last_sent_at: string | null;
   last_alert_at: string | null;
   created_at: string;
@@ -36,7 +35,6 @@ function mapRow(row: SubscriptionRow): Subscription {
     active: row.active === 1,
     lastState: row.last_state as MonitorState,
     lastSentProgress: row.last_sent_progress,
-    lastProgressBucket: row.last_progress_bucket,
     lastSentAt: row.last_sent_at,
     lastAlertAt: row.last_alert_at,
     createdAt: row.created_at,
@@ -111,10 +109,6 @@ export class SqliteNodeMonitorRepo implements NodeMonitorSubscriptionRepo {
     if (patch.lastSentProgress !== undefined) {
       fields.push('last_sent_progress = ?');
       values.push(patch.lastSentProgress);
-    }
-    if (patch.lastProgressBucket !== undefined) {
-      fields.push('last_progress_bucket = ?');
-      values.push(patch.lastProgressBucket);
     }
     if (patch.lastSentAt !== undefined) {
       fields.push('last_sent_at = ?');

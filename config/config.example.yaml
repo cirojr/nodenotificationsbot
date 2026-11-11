@@ -7,7 +7,6 @@
 
 telegram:
   botToken: "123456:ABC..."          # or env TELEGRAM_BOT_TOKEN
-  adminChatIds: [11111111]           # optional: receives service alerts
 
 bitcoin:
   network: signet                   # mainnet | testnet | signet | regtest
@@ -39,6 +38,6 @@ ibdMonitor:
   minAlertIntervalSeconds: 300      # debounce for state-change messages
   stopAfterSyncMinutes: 60          # 0 = keep subscription after IBD completes
   maxSubscriptions: 5               # server-wide cap on active subscriptions
-  allowedChatIds: ["*"]             # "*" = every bot user (public); empty = adminChatIds only
+  allowedChatIds: ["*"]             # "*" = every bot user (public); empty = nobody
   speedWindowMinutes: 15            # ETA/ speed calculation window
   commandThrottleSeconds: 3         # per-chat command cooldown for /ibd
