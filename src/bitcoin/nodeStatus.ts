@@ -1,38 +1,14 @@
-import {
-  RpcError,
-  type BlockHeader,
-  type BlockchainInfo,
-  type ChainStateInfo,
-  type ChainStatesInfo,
-  type NetworkInfo,
-} from './rpcClient';
+import type {BlockchainInfo, NetworkInfo} from './rpcClient';
 
 export interface BitcoinRpc {
   getBlockchainInfo(): Promise<BlockchainInfo>;
   getNetworkInfo(): Promise<NetworkInfo>;
-  getBlockHeader(hash: string, verbose?: boolean): Promise<BlockHeader>;
-  getChainStates(): Promise<ChainStatesInfo | null>;
 }
 
 export interface NodePeerInfo {
   total: number;
   inbound: number | null;
   outbound: number | null;
-}
-
-export interface NodeChainState {
-  blocks: number;
-  headers: number;
-  bestBlockHash: string;
-  verificationProgress: number;
-  validated: boolean;
-  snapshotBlockHash?: string;
-}
-
-export interface NodeAssumeUtxo {
-  active: NodeChainState;
-  background?: NodeChainState;
-  snapshotBlockHash?: string;
 }
 
 export interface NodeSample {
@@ -51,20 +27,15 @@ export interface NodeSample {
   pruned: boolean;
   peers: NodePeerInfo | null;
   warnings: string[];
-  nodeVersion: number | null;
-  subversion: string | null;
-  assumeUtxo?: NodeAssumeUtxo;
 }
 
 export interface Sampler {
   sample(): Promise<NodeSample>;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function toWarnings(...values: Array<string | string[] | undefined>): string[] {
+function normalizeWarnings(
+  ...values: Array<string | string[] | undefined>
+): string[] {
   const result: string[] = [];
   for (const value of values) {
     if (value === undefined) {
@@ -81,56 +52,18 @@ function toWarnings(...values: Array<string | string[] | undefined>): string[] {
   return result;
 }
 
-function mapChainState(state: ChainStateInfo, headers: number): NodeChainState {
+function mapPeers(network: NetworkInfo | undefined): NodePeerInfo | null {
+  if (!network) {
+    return null;
+  }
   return {
-    blocks: state.blocks,
-    headers,
-    bestBlockHash: state.bestblockhash,
-    verificationProgress: Number.isFinite(state.verificationprogress)
-      ? state.verificationprogress
-      : 0,
-    validated: state.validated === true,
-    ...(state.snapshot_blockhash
-      ? {snapshotBlockHash: state.snapshot_blockhash}
-      : {}),
-  };
-}
-
-function parseAssumeUtxo(
-  info: ChainStatesInfo | null,
-  headers: number,
-): NodeAssumeUtxo | undefined {
-  if (
-    !info ||
-    !Array.isArray(info.chainstates) ||
-    info.chainstates.length === 0
-  ) {
-    return undefined;
-  }
-  const [first, ...rest] = info.chainstates;
-  if (!first) {
-    return undefined;
-  }
-
-  const snapshotBlockHash =
-    info.chainstates.find(state => state.snapshot_blockhash)
-      ?.snapshot_blockhash ?? undefined;
-  const hasAssumeUtxoMarker =
-    info.chainstates.length > 1 || snapshotBlockHash !== undefined;
-  if (!hasAssumeUtxoMarker) {
-    return undefined;
-  }
-
-  const active = mapChainState(first, headers);
-  const backgroundRaw = rest.find(state => !state.validated) ?? rest[0];
-  const background = backgroundRaw
-    ? mapChainState(backgroundRaw, headers)
-    : undefined;
-
-  return {
-    active,
-    ...(background ? {background} : {}),
-    ...(snapshotBlockHash ? {snapshotBlockHash} : {}),
+    total: network.connections,
+    inbound: network.connections_in ?? null,
+    outbound:
+      network.connections_out ??
+      (network.connections_in !== undefined
+        ? network.connections - network.connections_in
+        : null),
   };
 }
 
@@ -142,72 +75,23 @@ async function optional<T>(promise: Promise<T>): Promise<T | undefined> {
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(
-        new RpcError(`node sample timed out after ${timeoutMs} ms`, 'timeout'),
-      );
-    }, timeoutMs);
-    timer.unref();
-    promise.then(
-      value => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 /**
- * Take one read-only snapshot of the node using the fixed RPC set from the
- * plan (§6.2). getblockchaininfo is the source of truth; the other calls are
- * best-effort context and never fail the sample on their own.
+ * Take one read-only snapshot of the node. `getblockchaininfo` is the source
+ * of truth; `getnetworkinfo` is best-effort context (peers and warnings) and
+ * never fails the sample on its own.
  */
-export async function sampleNode(
-  rpc: BitcoinRpc,
-  timeoutMs = 5_000,
-): Promise<NodeSample> {
-  return withTimeout(collectSample(rpc), timeoutMs * 2);
-}
-
-async function collectSample(rpc: BitcoinRpc): Promise<NodeSample> {
-  const info = await rpc.getBlockchainInfo();
-
-  const [network, header, chainStates] = await Promise.all([
+export async function sampleNode(rpc: BitcoinRpc): Promise<NodeSample> {
+  const [info, network] = await Promise.all([
+    rpc.getBlockchainInfo(),
     optional(rpc.getNetworkInfo()),
-    optional(rpc.getBlockHeader(info.bestblockhash)),
-    optional(rpc.getChainStates()),
   ]);
-
-  const assumeUtxo = parseAssumeUtxo(chainStates ?? null, info.headers);
-
   const rawVerification = info.verificationprogress;
-  const progressSource =
-    assumeUtxo?.background?.verificationProgress ?? rawVerification;
-  const progressPercent = Number.isFinite(progressSource)
-    ? clamp(progressSource * 100, 0, 100)
+  const progressPercent = Number.isFinite(rawVerification)
+    ? Math.min(100, Math.max(0, rawVerification * 100))
     : 0;
-
-  const peers: NodePeerInfo | null = network
-    ? {
-        total: network.connections,
-        inbound: network.connections_in ?? null,
-        outbound:
-          network.connections_out ??
-          (network.connections_in !== undefined
-            ? network.connections - network.connections_in
-            : null),
-      }
-    : null;
-
   const bestBlockTime =
-    header && Number.isFinite(header.time)
-      ? new Date(header.time * 1000)
+    typeof info.time === 'number' && Number.isFinite(info.time)
+      ? new Date(info.time * 1000)
       : null;
 
   return {
@@ -222,21 +106,14 @@ async function collectSample(rpc: BitcoinRpc): Promise<NodeSample> {
     bestBlockTime,
     sizeOnDisk: Number.isFinite(info.size_on_disk) ? info.size_on_disk : 0,
     pruned: info.pruned === true,
-    peers,
-    warnings: toWarnings(info.warnings, network?.warnings),
-    nodeVersion:
-      network && typeof network.version === 'number' ? network.version : null,
-    subversion: network?.subversion ?? null,
-    ...(assumeUtxo ? {assumeUtxo} : {}),
+    peers: mapPeers(network),
+    warnings: normalizeWarnings(info.warnings, network?.warnings),
   };
 }
 
 /**
  * "Synced" per the plan's state machine: the node says it left IBD and the
  * block tip is at (or one behind) the known header tip.
- *
- * Note: per decision Q7 the production node does not use assumeutxo, and
- * completion does not wait for background validation.
  */
 export function isNodeSynced(sample: NodeSample): boolean {
   return (
@@ -244,21 +121,14 @@ export function isNodeSynced(sample: NodeSample): boolean {
   );
 }
 
-/** True while the node still has block work to do (or is far behind headers). */
-export function isNodeInIbd(sample: NodeSample): boolean {
-  return !isNodeSynced(sample);
-}
-
 export class RpcNodeSampler implements Sampler {
   private readonly rpc: BitcoinRpc;
-  private readonly timeoutMs: number;
 
-  constructor(rpc: BitcoinRpc, timeoutMs = 5_000) {
+  constructor(rpc: BitcoinRpc) {
     this.rpc = rpc;
-    this.timeoutMs = timeoutMs;
   }
 
   sample(): Promise<NodeSample> {
-    return sampleNode(this.rpc, this.timeoutMs);
+    return sampleNode(this.rpc);
   }
 }

@@ -24,62 +24,13 @@ const rpcSchema = z
   });
 
 const storageSchema = z.object({
-  driver: z.literal('sqlite').default('sqlite'),
   path: z.string().min(1).default('data/bot.db'),
 });
 
-const watchesSchema = z.object({
-  defaultConfirmations: z.number().int().min(1).max(100).default(1),
-  maxConfirmations: z.number().int().min(1).max(100).default(6),
-  maxActivePerUser: z.number().int().min(1).default(20),
-  expireAfterDays: z.number().int().min(0).default(14),
+const ibdMonitorSchema = z.object({
+  sampleIntervalSeconds: z.number().int().min(5).max(3_600).default(60),
+  progressStepPercent: z.number().int().min(1).max(50).default(10),
 });
-
-const ibdMonitorSchema = z
-  .object({
-    enabled: z.boolean().default(true),
-    sampleIntervalSeconds: z.number().int().min(5).max(3_600).default(60),
-    defaultProgressStepPercent: z.number().int().min(1).max(50).default(10),
-    minProgressStepPercent: z.number().int().min(1).max(50).default(1),
-    maxProgressStepPercent: z.number().int().min(1).max(50).default(50),
-    heartbeatMinutes: z.number().int().min(0).max(1_440).default(0),
-    stallMinutes: z.number().int().min(1).max(1_440).default(15),
-    reorgTolerance: z.number().int().min(0).max(10_000).default(12),
-    unreachableAlertAfterMinutes: z.number().int().min(1).max(1_440).default(5),
-    minAlertIntervalSeconds: z.number().int().min(0).max(86_400).default(300),
-    stopAfterSyncMinutes: z.number().int().min(0).max(10_080).default(60),
-    maxSubscriptions: z.number().int().min(1).max(1_000).default(5),
-    allowedChatIds: z
-      .array(
-        z.union([
-          z.literal('*'),
-          z.number().int(),
-          z.string().regex(/^-?\d+$/, 'expected a numeric chat id'),
-        ]),
-      )
-      .default(['*']),
-    speedWindowMinutes: z.number().int().min(2).max(240).default(15),
-    commandThrottleSeconds: z.number().int().min(0).max(3_600).default(3),
-  })
-  .superRefine((monitor, ctx) => {
-    if (monitor.minProgressStepPercent > monitor.maxProgressStepPercent) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['minProgressStepPercent'],
-        message: 'minProgressStepPercent must be <= maxProgressStepPercent',
-      });
-    }
-    if (
-      monitor.defaultProgressStepPercent < monitor.minProgressStepPercent ||
-      monitor.defaultProgressStepPercent > monitor.maxProgressStepPercent
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['defaultProgressStepPercent'],
-        message: 'defaultProgressStepPercent must be within the min/max range',
-      });
-    }
-  });
 
 export const configSchema = z.object({
   telegram: z.object({
@@ -94,32 +45,11 @@ export const configSchema = z.object({
   bitcoin: z.object({
     network: networkSchema.default('mainnet'),
     rpc: rpcSchema,
-    pollIntervalSeconds: z.number().int().min(5).default(60),
   }),
-  storage: storageSchema.default({driver: 'sqlite', path: 'data/bot.db'}),
-  // Reserved for v0.2 tx watching; accepted so configs can be prepared early.
-  watches: watchesSchema.default({
-    defaultConfirmations: 1,
-    maxConfirmations: 6,
-    maxActivePerUser: 20,
-    expireAfterDays: 14,
-  }),
+  storage: storageSchema.default({path: 'data/bot.db'}),
   ibdMonitor: ibdMonitorSchema.default({
-    enabled: true,
     sampleIntervalSeconds: 60,
-    defaultProgressStepPercent: 10,
-    minProgressStepPercent: 1,
-    maxProgressStepPercent: 50,
-    heartbeatMinutes: 0,
-    stallMinutes: 15,
-    reorgTolerance: 12,
-    unreachableAlertAfterMinutes: 5,
-    minAlertIntervalSeconds: 300,
-    stopAfterSyncMinutes: 60,
-    maxSubscriptions: 5,
-    allowedChatIds: ['*'],
-    speedWindowMinutes: 15,
-    commandThrottleSeconds: 3,
+    progressStepPercent: 10,
   }),
 });
 
@@ -200,8 +130,6 @@ export interface LoadConfigOptions {
   /** Defaults to CONFIG_PATH env var or ./config/config.yaml. */
   path?: string;
   env?: NodeJS.ProcessEnv;
-  /** When true, a missing config file is an error. */
-  requireFile?: boolean;
 }
 
 export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
@@ -228,7 +156,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
     } else {
       fileConfig = raw;
     }
-  } else if (explicitPath || options.requireFile) {
+  } else if (explicitPath) {
     throw new ConfigError(`config file not found: ${configPath}`);
   }
 
@@ -242,16 +170,14 @@ export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
   return parsed.data;
 }
 
+const CHAIN_BY_NETWORK: Record<BitcoinNetwork, string> = {
+  mainnet: 'main',
+  testnet: 'test',
+  signet: 'signet',
+  regtest: 'regtest',
+};
+
 /** Map the configured network name to Bitcoin Core's `chain` field. */
 export function networkToChain(network: BitcoinNetwork): string {
-  switch (network) {
-    case 'mainnet':
-      return 'main';
-    case 'testnet':
-      return 'test';
-    case 'signet':
-      return 'signet';
-    case 'regtest':
-      return 'regtest';
-  }
+  return CHAIN_BY_NETWORK[network];
 }

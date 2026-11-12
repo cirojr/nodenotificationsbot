@@ -19,17 +19,10 @@ export interface RpcauthCredential {
   line: string;
 }
 
-export interface ParsedRpcauth {
-  user: string;
-  salt: string;
-  hash: string;
-}
-
 const SALT_BYTES = 16;
 const PASSWORD_BYTES = 32;
 const SALT_PATTERN = /^[0-9a-f]{32}$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
-const LINE_PATTERN = /^rpcauth=([^:\s]+):([0-9a-f]{32})\$([0-9a-f]{64})$/;
 
 /** Random 32-byte password, base64url without padding (same shape as Core). */
 export function generateRpcauthPassword(): string {
@@ -86,22 +79,6 @@ export function generateRpcauth(
     hash,
     line: formatRpcauthLine(user, salt, hash),
   };
-}
-
-/** Parse and validate an `rpcauth=user:salt$hash` line. */
-export function parseRpcauthLine(line: string): ParsedRpcauth {
-  const match = LINE_PATTERN.exec(line.trim());
-  if (!match) {
-    throw new Error('expected rpcauth=<user>:<32 hex salt>$<64 hex hash>');
-  }
-  const user = match[1];
-  const salt = match[2];
-  const hash = match[3];
-  if (user === undefined || salt === undefined || hash === undefined) {
-    throw new Error('rpcauth line is missing a field');
-  }
-  assertUser(user);
-  return {user, salt, hash};
 }
 
 function assertUser(user: string): void {

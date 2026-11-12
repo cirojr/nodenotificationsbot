@@ -128,12 +128,14 @@ describe('RpcClient', () => {
     });
   });
 
-  it('returns null for an unknown getchainstates method', async () => {
-    const testServer = await startServer((_request, response) => {
-      sendJson(response, 500, {
-        result: null,
-        error: {code: -32601, message: 'Method not found'},
-        id: 1,
+  it('calls getnetworkinfo', async () => {
+    const testServer = await startServer((_request, response, body) => {
+      const parsed = JSON.parse(body) as {method: string; id: number};
+      expect(parsed.method).toBe('getnetworkinfo');
+      sendJson(response, 200, {
+        result: {connections: 8, connections_in: 2, connections_out: 6},
+        error: null,
+        id: parsed.id,
       });
     });
 
@@ -143,7 +145,11 @@ describe('RpcClient', () => {
       password: 'p',
       timeoutMs: 2_000,
     });
-    await expect(client.getChainStates()).resolves.toBeNull();
+    await expect(client.getNetworkInfo()).resolves.toMatchObject({
+      connections: 8,
+      connections_in: 2,
+      connections_out: 6,
+    });
   });
 
   it('times out slow requests', async () => {

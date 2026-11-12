@@ -46,30 +46,7 @@ export interface NetworkInfo {
   connections: number;
   connections_in?: number;
   connections_out?: number;
-  version?: number;
-  subversion?: string;
   warnings?: string | string[];
-}
-
-export interface BlockHeader {
-  hash: string;
-  height: number;
-  time: number;
-  mediantime?: number;
-  confirmations?: number;
-}
-
-export interface ChainStateInfo {
-  blocks: number;
-  bestblockhash: string;
-  verificationprogress: number;
-  validated: boolean;
-  snapshot_blockhash?: string;
-}
-
-export interface ChainStatesInfo {
-  headers: number;
-  chainstates: ChainStateInfo[];
 }
 
 interface JsonRpcResponse<T> {
@@ -150,10 +127,6 @@ export class RpcClient {
     this.user = options.user;
     this.password = options.password;
     this.timeoutMs = options.timeoutMs ?? 5_000;
-  }
-
-  get endpoint(): string {
-    return rpcEndpointLabel(this.url);
   }
 
   private buildAuthHeader(): string {
@@ -270,28 +243,5 @@ export class RpcClient {
 
   getNetworkInfo(): Promise<NetworkInfo> {
     return this.call<NetworkInfo>('getnetworkinfo');
-  }
-
-  getBlockHeader(hash: string, verbose = true): Promise<BlockHeader> {
-    return this.call<BlockHeader>('getblockheader', [hash, verbose]);
-  }
-
-  /**
-   * Optional (Core >= 26). Returns null when the node does not know the method,
-   * so callers can fall back to getblockchaininfo.
-   */
-  async getChainStates(): Promise<ChainStatesInfo | null> {
-    try {
-      return await this.call<ChainStatesInfo>('getchainstates');
-    } catch (error) {
-      if (
-        error instanceof RpcError &&
-        error.kind === 'rpc' &&
-        error.rpcCode === -32601
-      ) {
-        return null;
-      }
-      throw error;
-    }
   }
 }

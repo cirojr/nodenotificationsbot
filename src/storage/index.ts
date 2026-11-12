@@ -1,62 +1,34 @@
 import type {Logger} from '../logger';
-import {createSqliteStorage} from './nodeMonitorRepo';
+import {createSqliteStorage} from './monitoredChatRepo';
 
-export type MonitorState =
-  'unknown' | 'ibd' | 'synced' | 'stalled' | 'regressed' | 'unreachable';
+export type MonitorState = 'unknown' | 'ibd' | 'synced' | 'unreachable';
 
-export const MONITOR_STATES: readonly MonitorState[] = [
-  'unknown',
-  'ibd',
-  'synced',
-  'stalled',
-  'regressed',
-  'unreachable',
-];
-
-export interface Subscription {
-  id: number;
-  telegramChatId: number;
-  progressStepPercent: number;
-  active: boolean;
+export interface MonitoredChat {
+  chatId: number;
   lastState: MonitorState;
-  lastSentProgress: number | null;
-  lastSentAt: string | null;
-  lastAlertAt: string | null;
+  lastSentBucket: number | null;
   createdAt: string;
-  updatedAt: string;
 }
 
-export interface SubscriptionPatch {
-  progressStepPercent?: number;
-  active?: boolean;
+export interface MonitoredChatPatch {
   lastState?: MonitorState;
-  lastSentProgress?: number | null;
-  lastSentAt?: string | null;
-  lastAlertAt?: string | null;
+  lastSentBucket?: number | null;
 }
 
-export interface NodeMonitorSubscriptionRepo {
-  getByChatId(chatId: number): Subscription | null;
-  listActive(): Subscription[];
-  countActive(): number;
-  create(chatId: number, progressStepPercent: number): Subscription;
-  update(chatId: number, patch: SubscriptionPatch): void;
-  setActive(chatId: number, active: boolean): boolean;
+export interface MonitoredChatRepo {
+  list(): MonitoredChat[];
+  get(chatId: number): MonitoredChat | null;
+  add(chatId: number): void;
+  update(chatId: number, patch: MonitoredChatPatch): void;
+  remove(chatId: number): boolean;
   close(): void;
 }
 
 export interface Storage {
-  repo: NodeMonitorSubscriptionRepo;
+  chats: MonitoredChatRepo;
   close(): void;
 }
 
-export interface StorageConfig {
-  driver: 'sqlite';
-  path: string;
-}
-
-export const DEFAULT_PROGRESS_STEP_PERCENT = 10;
-
-export function createStorage(config: StorageConfig, logger: Logger): Storage {
-  return createSqliteStorage(config.path, logger);
+export function createStorage(path: string, logger: Logger): Storage {
+  return createSqliteStorage(path, logger);
 }

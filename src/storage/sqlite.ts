@@ -14,38 +14,25 @@ interface Migration {
 /**
  * Migrations are embedded so the compiled output never depends on copied .sql
  * files. `PRAGMA user_version` tracks the applied version.
+ *
+ * v0.1 shipped migrations 1-2 for the old per-subscription table. There is no
+ * production data yet, so v3 drops that table and replaces it with the lean
+ * `monitored_chats` table.
  */
 const MIGRATIONS: Migration[] = [
   {
-    version: 1,
-    name: 'node_monitor_subscriptions',
+    version: 3,
+    name: 'monitored_chats',
     sql: `
-      CREATE TABLE IF NOT EXISTS node_monitor_subscriptions (
-        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-        telegram_chat_id      INTEGER NOT NULL UNIQUE,
-        progress_step_percent INTEGER NOT NULL DEFAULT 10
-                                CHECK (progress_step_percent BETWEEN 1 AND 50),
-        active                INTEGER NOT NULL DEFAULT 1,
-        last_state            TEXT NOT NULL DEFAULT 'unknown'
-                                CHECK (last_state IN ('unknown','ibd','synced','stalled','regressed','unreachable')),
-        last_sent_progress    REAL,
-        last_progress_bucket  INTEGER,
-        last_sent_at          TEXT,
-        last_alert_at         TEXT,
-        created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-        updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      );
+      DROP TABLE IF EXISTS node_monitor_subscriptions;
 
-      CREATE INDEX IF NOT EXISTS node_monitor_subscriptions_active
-        ON node_monitor_subscriptions (active) WHERE active = 1;
-    `,
-  },
-  {
-    version: 2,
-    name: 'drop_last_progress_bucket',
-    sql: `
-      ALTER TABLE node_monitor_subscriptions
-        DROP COLUMN last_progress_bucket;
+      CREATE TABLE monitored_chats (
+        chat_id          INTEGER PRIMARY KEY,
+        last_state       TEXT NOT NULL DEFAULT 'unknown'
+                           CHECK (last_state IN ('unknown','ibd','synced','unreachable')),
+        last_sent_bucket INTEGER,
+        created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
     `,
   },
 ];
@@ -100,8 +87,4 @@ export function migrate(db: SqliteDatabase, logger: Logger): number {
   }
 
   return applied;
-}
-
-export function latestMigrationVersion(): number {
-  return MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
 }

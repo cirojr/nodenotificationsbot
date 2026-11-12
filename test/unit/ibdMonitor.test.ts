@@ -2,7 +2,6 @@ import {describe, expect, it} from 'vitest';
 import type {IbdMonitorConfig} from '../../src/config';
 import {IbdMonitor} from '../../src/services/ibdMonitor';
 import {
-  FakeClock,
   FakeSampler,
   makeSample,
   memoryRepo,
@@ -13,7 +12,6 @@ import {
 } from '../helpers';
 
 function setup(options: {config?: Partial<IbdMonitorConfig>} = {}) {
-  const clock = new FakeClock();
   const repo = memoryRepo();
   const sampler = new FakeSampler();
   const sender = new RecordingSender();
@@ -25,374 +23,245 @@ function setup(options: {config?: Partial<IbdMonitorConfig>} = {}) {
     config,
     logger: silentLogger,
     rpcUrl: 'http://127.0.0.1:8332',
-    now: clock.now,
   });
 
   async function subscribe(
     chatId: number,
-    sample: Parameters<typeof makeSample>[0],
-    step?: number,
+    sample: Parameters<typeof makeSample>[0] = {},
   ) {
     sampler.push(makeSample(sample));
-    return monitor.subscribe(chatId, step);
+    return monitor.subscribe(chatId);
   }
 
-  return {clock, repo, sampler, sender, config, monitor, subscribe};
+  return {repo, sampler, sender, config, monitor, subscribe};
 }
 
 describe('IbdMonitor subscriptions', () => {
-  it('sends an immediate snapshot and records the progress baseline', async () => {
+  it('saves the chat and records the current bucket on /ibd', async () => {
+    const {repo, subscribe} = setup();
+
+    const sample = await subscribe(1, {
+      progressPercent: 9.5,
+      verificationProgress: 0.095,
+    });
+
+    expect(sample.progressPercent).toBeCloseTo(9.5, 3);
+    expect(repo.list().map(chat => chat.chatId)).toEqual([1]);
+    expect(repo.get(1)?.lastState).toBe('ibd');
+    expect(repo.get(1)?.lastSentBucket).toBe(0);
+  });
+
+  it('notifies when the progress bucket advances', async () => {
     const {monitor, sampler, sender, repo, subscribe} = setup();
+    await subscribe(1, {
+      progressPercent: 9.5,
+      verificationProgress: 0.095,
+    });
 
-    await subscribe(1, {progressPercent: 9.5, verificationProgress: 0.095}, 10);
-
-    expect(sender.messages).toHaveLength(1);
-    expect(sender.messages[0]?.html).toContain('Node is in IBD');
-    const subscription = repo.getByChatId(1);
-    expect(subscription?.active).toBe(true);
-    expect(subscription?.lastState).toBe('ibd');
-    expect(subscription?.lastSentProgress).toBeCloseTo(9.5, 3);
-
-    // 9.5% -> 10.0% reaches the next step for step=10.
     sampler.push(makeSample({progressPercent: 10, verificationProgress: 0.1}));
     await monitor.tick();
 
-    expect(sender.messages).toHaveLength(2);
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0]?.chatId).toBe(1);
     expect(sender.last()?.html).toContain(
       'Progress     10.0%  (step: every 10%)',
     );
-    expect(repo.getByChatId(1)?.lastSentProgress).toBeCloseTo(10, 3);
+    expect(repo.get(1)?.lastSentBucket).toBe(1);
 
-    // Same step -> no message.
     sampler.push(makeSample({progressPercent: 10, verificationProgress: 0.1}));
     await monitor.tick();
-    expect(sender.messages).toHaveLength(2);
+    expect(sender.messages).toHaveLength(1);
   });
 
-  it('sends one message when progress jumps several steps', async () => {
+  it('sends one message when progress jumps several buckets', async () => {
     const {monitor, sampler, sender, repo, subscribe} = setup();
-    await subscribe(1, {progressPercent: 34, verificationProgress: 0.34}, 10);
+    await subscribe(1, {
+      progressPercent: 34,
+      verificationProgress: 0.34,
+    });
 
     sampler.push(makeSample({progressPercent: 56, verificationProgress: 0.56}));
     await monitor.tick();
 
-    expect(sender.messages).toHaveLength(2);
+    expect(sender.messages).toHaveLength(1);
     expect(sender.last()?.html).toContain('Progress     56.0%');
-    expect(repo.getByChatId(1)?.lastSentProgress).toBeCloseTo(56, 3);
+    expect(repo.get(1)?.lastSentBucket).toBe(5);
 
     sampler.push(makeSample({progressPercent: 60, verificationProgress: 0.6}));
     await monitor.tick();
-    expect(sender.messages).toHaveLength(3);
-  });
-
-  it('updates the step when /ibd watch is re-issued', async () => {
-    const {monitor, sampler, sender, repo, subscribe} = setup();
-    await subscribe(1, {progressPercent: 20, verificationProgress: 0.2}, 10);
-    expect(sender.messages).toHaveLength(1);
-
-    await monitor.subscribe(1, 5);
-    expect(repo.getByChatId(1)?.progressStepPercent).toBe(5);
     expect(sender.messages).toHaveLength(2);
+  });
 
-    sampler.push(makeSample({progressPercent: 25, verificationProgress: 0.25}));
+  it('broadcasts the same update to every monitored chat', async () => {
+    const {monitor, sampler, sender, subscribe} = setup();
+    await subscribe(1, {progressPercent: 9.5});
+    await subscribe(2, {progressPercent: 9.5});
+
+    sampler.push(makeSample({progressPercent: 10}));
     await monitor.tick();
-    expect(sender.messages).toHaveLength(3);
-    expect(sender.last()?.html).toContain(
-      'Progress     25.0%  (step: every 5%)',
-    );
+
+    expect(sender.messages.map(message => message.chatId)).toEqual([1, 2]);
   });
 
-  it('enforces the server-wide subscription cap', async () => {
-    const {monitor, subscribe} = setup({config: {maxSubscriptions: 1}});
-    await subscribe(1, {progressPercent: 10});
-
-    await expect(monitor.subscribe(2, 10)).rejects.toMatchObject({
-      code: 'cap_reached',
-    });
+  it('removes a chat on /ibd stop', async () => {
+    const {monitor, repo, subscribe} = setup();
+    await subscribe(1, {progressPercent: 50});
 
     expect(await monitor.unsubscribe(1)).toBe(true);
-    await expect(monitor.subscribe(2, 10)).resolves.toMatchObject({
-      telegramChatId: 2,
-    });
+    expect(repo.get(1)).toBeNull();
+    expect(await monitor.unsubscribe(1)).toBe(false);
   });
 
-  it('enforces allowedChatIds and allows nobody when the list is empty', async () => {
-    const restricted = setup({config: {allowedChatIds: [1]}});
-    await expect(restricted.monitor.subscribe(2, 10)).rejects.toMatchObject({
-      code: 'not_allowed',
-    });
-    await expect(restricted.subscribe(1, {})).resolves.toMatchObject({
-      telegramChatId: 1,
-    });
-
-    const closed = setup({config: {allowedChatIds: []}});
-    expect(closed.monitor.isChatAllowed(9)).toBe(false);
-    expect(closed.monitor.isChatAllowed(1)).toBe(false);
-    await expect(closed.monitor.subscribe(1, 10)).rejects.toMatchObject({
-      code: 'not_allowed',
-    });
-  });
-
-  it('rejects new subscriptions but still allows unsubscribe when disabled', async () => {
-    const {monitor, repo} = setup({config: {enabled: false}});
-
-    await expect(monitor.subscribe(1, 10)).rejects.toMatchObject({
-      code: 'disabled',
-    });
-
-    // An existing row (e.g. config was disabled after restart) can still be stopped.
-    repo.create(1, 10);
-    expect(await monitor.unsubscribe(1)).toBe(true);
-    expect(repo.getByChatId(1)?.active).toBe(false);
-    expect(repo.getByChatId(1)?.lastState).toBe('unknown');
-  });
-
-  it('auto-stops a synced subscription after stopAfterSyncMinutes', async () => {
-    const {monitor, repo, sampler, sender, clock, subscribe} = setup({
-      config: {stopAfterSyncMinutes: 60},
-    });
-
-    await subscribe(1, {...syncedSample()});
-    expect(sender.messages).toHaveLength(1);
-    expect(repo.getByChatId(1)?.lastState).toBe('synced');
-
-    clock.advance(61 * 60_000);
+  it('does not save a chat when the node is already synced', async () => {
+    const {monitor, repo, sampler} = setup();
     sampler.push(syncedSample());
-    await monitor.tick();
 
-    expect(repo.getByChatId(1)?.active).toBe(false);
-    expect(sender.messages).toHaveLength(1);
+    const sample = await monitor.subscribe(1);
+
+    expect(sample.initialBlockDownload).toBe(false);
+    expect(repo.get(1)).toBeNull();
+  });
+
+  it('saves the chat as unreachable when /ibd cannot sample', async () => {
+    const {monitor, repo, sampler} = setup();
+    sampler.push(new Error('connection refused'));
+
+    await expect(monitor.subscribe(1)).rejects.toThrow('connection refused');
+    expect(repo.get(1)?.lastState).toBe('unreachable');
   });
 });
 
 describe('IbdMonitor state machine', () => {
-  it('sends the completion message once', async () => {
-    const {monitor, sampler, sender, repo, clock, subscribe} = setup();
-    await subscribe(1, {progressPercent: 88, verificationProgress: 0.88});
+  it('sends the completion message once and clears the chats', async () => {
+    const {monitor, sampler, sender, repo, subscribe} = setup();
+    await subscribe(1, {progressPercent: 88});
 
-    clock.advance(60_000);
     sampler.push(syncedSample());
     await monitor.tick();
 
-    expect(sender.messages).toHaveLength(2);
+    expect(sender.messages).toHaveLength(1);
     expect(sender.last()?.html).toContain(
       'IBD finished — node is fully synced',
     );
-    expect(repo.getByChatId(1)?.lastState).toBe('synced');
+    expect(repo.get(1)).toBeNull();
 
-    clock.advance(60_000);
+    await monitor.tick();
+    expect(sender.messages).toHaveLength(1);
+  });
+
+  it('retries a transient completion failure, then clears the chat', async () => {
+    const {monitor, sampler, sender, repo, subscribe} = setup();
+    await subscribe(1, {progressPercent: 88});
+
+    sender.result = {
+      ok: false,
+      error: 'Too Many Requests',
+      retryable: true,
+      blocked: false,
+    };
     sampler.push(syncedSample());
     await monitor.tick();
-    expect(sender.messages).toHaveLength(2);
+    expect(repo.get(1)?.lastState).toBe('synced');
+
+    sender.result = {ok: true};
+    sampler.push(syncedSample());
+    await monitor.tick();
+    expect(repo.get(1)).toBeNull();
   });
 
-  it('alerts once on a stall, then resumes silently', async () => {
-    const base = makeSample({
-      blocks: 100,
-      headers: 200,
-      progressPercent: 50,
-      verificationProgress: 0.5,
-    });
-    const {monitor, sampler, sender, repo, clock, subscribe} = setup();
-    await subscribe(1, {...base});
+  it('sends the unreachable alert once, then recovers', async () => {
+    const {monitor, sampler, sender, repo, subscribe} = setup();
+    await subscribe(1, {progressPercent: 50});
 
-    clock.advance(60_000);
-    sampler.push({...base});
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(1);
-
-    clock.advance(15 * 60_000);
-    sampler.push({...base});
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(2);
-    expect(sender.last()?.html).toContain('IBD appears stalled');
-    expect(repo.getByChatId(1)?.lastState).toBe('stalled');
-
-    clock.advance(60_000);
-    sampler.push({...base});
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(2);
-
-    // Blocks advance: resume without a separate message.
-    clock.advance(60_000);
-    sampler.push({
-      ...base,
-      blocks: 101,
-      progressPercent: 50.5,
-      verificationProgress: 0.505,
-    });
-    await monitor.tick();
-    expect(repo.getByChatId(1)?.lastState).toBe('ibd');
-    expect(sender.messages).toHaveLength(2);
-
-    // A later step crossing is sent again.
-    clock.advance(60_000);
-    sampler.push({
-      ...base,
-      blocks: 200,
-      progressPercent: 60,
-      verificationProgress: 0.6,
-    });
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(3);
-    expect(sender.last()?.html).toContain('Progress     60.0%');
-  });
-
-  it('alerts once on regression and resumes when blocks grow', async () => {
-    const base = makeSample({
-      blocks: 1000,
-      headers: 2000,
-      progressPercent: 40,
-      verificationProgress: 0.4,
-    });
-    const {monitor, sampler, sender, repo, clock, subscribe} = setup();
-    await subscribe(1, {...base});
-
-    clock.advance(60_000);
-    sampler.push({...base});
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(1);
-
-    clock.advance(60_000);
-    sampler.push({...base, blocks: 900});
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(2);
-    expect(sender.last()?.html).toContain('Node regressed / is reindexing');
-    expect(repo.getByChatId(1)?.lastState).toBe('regressed');
-
-    clock.advance(60_000);
-    sampler.push({...base, blocks: 900});
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(2);
-
-    clock.advance(60_000);
-    sampler.push({...base, blocks: 901});
-    await monitor.tick();
-    expect(repo.getByChatId(1)?.lastState).toBe('ibd');
-    expect(sender.messages).toHaveLength(2);
-  });
-
-  it('alerts after the unreachable threshold and recovers', async () => {
-    const {monitor, sampler, sender, repo, clock, subscribe} = setup();
-    await subscribe(1, {});
-
-    clock.advance(60_000);
     sampler.push(new Error('connect ECONNREFUSED 127.0.0.1:8332'));
     await monitor.tick();
-    expect(sender.messages).toHaveLength(1);
-
-    clock.advance(5 * 60_000);
-    sampler.push(new Error('connect ECONNREFUSED 127.0.0.1:8332'));
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(2);
     expect(sender.last()?.html).toContain('Node unreachable');
-    expect(repo.getByChatId(1)?.lastState).toBe('unreachable');
+    expect(repo.get(1)?.lastState).toBe('unreachable');
 
-    clock.advance(60_000);
     sampler.push(new Error('connect ECONNREFUSED 127.0.0.1:8332'));
+    await monitor.tick();
+    expect(sender.messages).toHaveLength(1);
+
+    sampler.push(makeSample({progressPercent: 51}));
+    await monitor.tick();
+    expect(sender.last()?.html).toContain('Node reachable again');
+    expect(repo.get(1)?.lastState).toBe('ibd');
+  });
+
+  it('alerts again on a new unreachable episode', async () => {
+    const {monitor, sampler, sender, subscribe} = setup();
+    await subscribe(1, {progressPercent: 50});
+    const failure = new Error('connect ECONNREFUSED 127.0.0.1:8332');
+
+    sampler.push(failure);
+    await monitor.tick();
+    expect(sender.messages).toHaveLength(1);
+
+    sampler.push(makeSample({progressPercent: 51}));
     await monitor.tick();
     expect(sender.messages).toHaveLength(2);
 
-    clock.advance(60_000);
-    sampler.push(makeSample());
+    sampler.push(failure);
     await monitor.tick();
     expect(sender.messages).toHaveLength(3);
-    expect(sender.last()?.html).toContain('Node reachable again');
-    expect(repo.getByChatId(1)?.lastState).toBe('ibd');
+    expect(sender.last()?.html).toContain('Node unreachable');
   });
 
-  it('does not duplicate completion or a step update across restarts', async () => {
+  it('does not duplicate a progress update after a restart', async () => {
     const {monitor, repo, sampler, sender} = setup();
-    const nowIso = new Date().toISOString();
+    repo.add(1);
+    repo.update(1, {lastState: 'ibd', lastSentBucket: 8});
 
-    repo.create(1, 10);
-    repo.update(1, {
-      lastState: 'ibd',
-      lastSentProgress: 88.73,
-      lastSentAt: nowIso,
-    });
-    sampler.push(
-      makeSample({progressPercent: 88.73, verificationProgress: 0.8873}),
-    );
+    sampler.push(makeSample({progressPercent: 88.73}));
     await monitor.tick();
     expect(sender.messages).toHaveLength(0);
 
-    sampler.push(
-      makeSample({progressPercent: 90.1, verificationProgress: 0.901}),
-    );
-    await monitor.tick();
-    expect(sender.messages).toHaveLength(1);
-
-    repo.setActive(1, false);
-    repo.create(2, 10);
-    repo.update(2, {lastState: 'synced', lastSentAt: nowIso});
-    sampler.push(syncedSample());
+    sampler.push(makeSample({progressPercent: 90.1}));
     await monitor.tick();
     expect(sender.messages).toHaveLength(1);
   });
 
-  it('sends a heartbeat when configured and nothing was sent', async () => {
-    const {monitor, sampler, sender, clock, subscribe} = setup({
-      config: {heartbeatMinutes: 1},
-    });
-    await subscribe(1, {progressPercent: 50, verificationProgress: 0.5});
+  it('resets the baseline silently when progress moves backwards', async () => {
+    const {monitor, sampler, sender, repo, subscribe} = setup();
+    await subscribe(1, {progressPercent: 50});
+
+    sampler.push(makeSample({progressPercent: 40}));
+    await monitor.tick();
+    expect(sender.messages).toHaveLength(0);
+    expect(repo.get(1)?.lastSentBucket).toBe(4);
+
+    sampler.push(makeSample({progressPercent: 50}));
+    await monitor.tick();
     expect(sender.messages).toHaveLength(1);
 
-    clock.advance(2 * 60_000);
-    sampler.push(makeSample({progressPercent: 50, verificationProgress: 0.5}));
+    sampler.push(makeSample({progressPercent: 60}));
     await monitor.tick();
-
     expect(sender.messages).toHaveLength(2);
-    expect(sender.last()?.html).toContain('Node is in IBD');
   });
 
-  it('deactivates a subscription when Telegram blocks the bot', async () => {
-    const {repo, sender, subscribe} = setup();
+  it('removes a chat when Telegram blocks the bot', async () => {
+    const {monitor, sampler, sender, repo, subscribe} = setup();
+    await subscribe(1, {progressPercent: 9.5});
+
     sender.result = {
       ok: false,
       error: 'Forbidden: bot was blocked by the user',
       retryable: false,
       blocked: true,
     };
+    sampler.push(makeSample({progressPercent: 10}));
+    await monitor.tick();
 
-    await subscribe(1, {});
-
-    expect(repo.getByChatId(1)?.active).toBe(false);
-  });
-});
-
-describe('IbdMonitor /ibd status', () => {
-  it('returns a snapshot and the subscription view', async () => {
-    const {monitor, subscribe} = setup();
-    await subscribe(1, {progressPercent: 88.7, verificationProgress: 0.887}, 5);
-
-    const status = await monitor.status(1);
-    expect(status.error).toBeNull();
-    expect(status.sample?.blocks).toBe(812_345);
-    expect(status.subscription?.progressStepPercent).toBe(5);
-
-    const message = monitor.formatStatusMessage(status);
-    expect(message).toContain('IBD monitor subscription');
-    expect(message).toContain('Step         every 5%');
+    expect(repo.get(1)).toBeNull();
   });
 
-  it('reports an unreachable node without throwing', async () => {
-    const {monitor, sampler, clock, subscribe} = setup();
-    await subscribe(1, {});
-    clock.advance(31_000);
-    sampler.push(new Error('connection refused'));
-
-    const status = await monitor.status(1);
-    expect(status.sample).toBeNull();
-    expect(status.error).toContain('connection refused');
-    expect(monitor.formatStatusMessage(status)).toContain('unreachable');
-  });
-
-  it('reports when there is no subscription', async () => {
-    const {monitor, sampler} = setup();
+  it('does not sample while no chats are monitored', async () => {
+    const {monitor, sampler, sender} = setup();
     sampler.push(makeSample());
-    const status = await monitor.status(1);
-    expect(status.subscription).toBeNull();
-    expect(monitor.formatStatusMessage(status)).toContain('not subscribed');
+
+    await monitor.tick();
+
+    expect(sampler.pending).toBe(1);
+    expect(sender.messages).toHaveLength(0);
   });
 });

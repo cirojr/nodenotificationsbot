@@ -3,7 +3,7 @@ import type {IbdMonitorConfig} from '../../src/config';
 import type {Logger} from '../../src/logger';
 import type {NodeSample, Sampler} from '../../src/bitcoin/nodeStatus';
 import type {MessageSender, SendResult} from '../../src/services/ibdMonitor';
-import {SqliteNodeMonitorRepo} from '../../src/storage/nodeMonitorRepo';
+import {SqliteMonitoredChatRepo} from '../../src/storage/monitoredChatRepo';
 import {openSqlite} from '../../src/storage/sqlite';
 
 export const silentLogger: Logger = pino({level: 'silent'});
@@ -12,38 +12,10 @@ export function testConfig(
   overrides: Partial<IbdMonitorConfig> = {},
 ): IbdMonitorConfig {
   return {
-    enabled: true,
     sampleIntervalSeconds: 60,
-    defaultProgressStepPercent: 10,
-    minProgressStepPercent: 1,
-    maxProgressStepPercent: 50,
-    heartbeatMinutes: 0,
-    stallMinutes: 15,
-    reorgTolerance: 12,
-    unreachableAlertAfterMinutes: 5,
-    minAlertIntervalSeconds: 300,
-    stopAfterSyncMinutes: 60,
-    maxSubscriptions: 5,
-    allowedChatIds: ['*'],
-    speedWindowMinutes: 15,
-    commandThrottleSeconds: 3,
+    progressStepPercent: 10,
     ...overrides,
   };
-}
-
-export class FakeClock {
-  current: number;
-
-  constructor(start = Date.UTC(2026, 10, 8, 14, 0, 0)) {
-    this.current = start;
-  }
-
-  now = (): number => this.current;
-
-  advance(ms: number): number {
-    this.current += ms;
-    return this.current;
-  }
 }
 
 const HASH = '00000000000000000001a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7';
@@ -63,8 +35,6 @@ export function makeSample(overrides: Partial<NodeSample> = {}): NodeSample {
     pruned: false,
     peers: {total: 8, inbound: 2, outbound: 6},
     warnings: [],
-    nodeVersion: 280_000,
-    subversion: '/Satoshi:28.0.0/',
   };
   return {...base, ...overrides};
 }
@@ -121,6 +91,6 @@ export class RecordingSender implements MessageSender {
   }
 }
 
-export function memoryRepo(): SqliteNodeMonitorRepo {
-  return new SqliteNodeMonitorRepo(openSqlite(':memory:', silentLogger));
+export function memoryRepo(): SqliteMonitoredChatRepo {
+  return new SqliteMonitoredChatRepo(openSqlite(':memory:', silentLogger));
 }

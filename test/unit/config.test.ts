@@ -18,10 +18,9 @@ bitcoin:
     user: "rpcuser"
     password: "rpcpass"
 storage:
-  driver: sqlite
   path: "data/test.db"
 ibdMonitor:
-  defaultProgressStepPercent: 5
+  progressStepPercent: 5
   sampleIntervalSeconds: 30
 `;
 
@@ -36,11 +35,9 @@ describe('loadConfig', () => {
     expect(config.telegram.botToken).toBe('123456:FROMFILE');
     expect(config.bitcoin.network).toBe('regtest');
     expect(config.bitcoin.rpc.timeoutMs).toBe(5000);
-    expect(config.storage).toEqual({driver: 'sqlite', path: 'data/test.db'});
-    expect(config.ibdMonitor.defaultProgressStepPercent).toBe(5);
+    expect(config.storage).toEqual({path: 'data/test.db'});
+    expect(config.ibdMonitor.progressStepPercent).toBe(5);
     expect(config.ibdMonitor.sampleIntervalSeconds).toBe(30);
-    expect(config.ibdMonitor.maxSubscriptions).toBe(5);
-    expect(config.ibdMonitor.allowedChatIds).toEqual(['*']);
   });
 
   it('lets environment variables override secrets and paths', () => {
@@ -61,10 +58,7 @@ describe('loadConfig', () => {
     expect(config.telegram.botToken).toBe('999:FROMENV');
     expect(config.bitcoin.rpc.user).toBe('envuser');
     expect(config.bitcoin.rpc.password).toBe('envpass');
-    expect(config.storage).toEqual({
-      driver: 'sqlite',
-      path: '/tmp/override.db',
-    });
+    expect(config.storage).toEqual({path: '/tmp/override.db'});
   });
 
   it('supports env-only configuration when no config file exists', () => {
@@ -81,7 +75,7 @@ describe('loadConfig', () => {
 
       expect(config.telegram.botToken).toBe('123:ENVONLY');
       expect(config.bitcoin.network).toBe('mainnet');
-      expect(config.storage.driver).toBe('sqlite');
+      expect(config.storage.path).toBe('data/bot.db');
       expect(config.bitcoin.rpc.user).toBe('envuser');
       expect(config.bitcoin.rpc.password).toBe('envpass');
     } finally {
@@ -141,22 +135,6 @@ bitcoin:
     );
 
     expect(() => loadConfig({path, env: {}})).toThrow(/both user and password/);
-  });
-
-  it('rejects a step default outside the configured range', () => {
-    const dir = tempDir();
-    const path = join(dir, 'config.yaml');
-    writeFileSync(
-      path,
-      validYaml.replace(
-        'defaultProgressStepPercent: 5',
-        'defaultProgressStepPercent: 60',
-      ),
-    );
-
-    expect(() => loadConfig({path, env: {}})).toThrow(
-      /defaultProgressStepPercent/,
-    );
   });
 
   it('rejects an explicitly missing config file', () => {

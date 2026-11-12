@@ -1,26 +1,3 @@
-# NodeNotificationsBot — Future Plans
-
-v0.1, the read-only **IBD monitor**, is implemented and documented in `README.md`.
-This file tracks only work that is still outstanding: v0.2 transaction
-notifications and a short list of optional follow-ups.
-
-## Status
-
-| Area | State |
-|---|---|
-| v0.1 IBD monitor (`/ibd`, `/ibd watch`, `/ibd status`, `/ibd stop`) | Shipped |
-| SQLite storage + migrations, rpcauth tooling, systemd unit | Shipped |
-| v0.2 tx notifications (ZMQ + `/watch`) | Not started |
-| PostgreSQL | Deferred until scale/operations require it |
-| Prometheus metrics | Optional, not started |
-
-The existing foundation to build on: config loader (zod), pino logger, JSON-RPC
-client with `rpcauth` Basic auth, SQLite repository/migration runner, grammY bot
-with auto-retry and throttling, the shared IBD sampler/state machine, and the
-systemd deployment unit. None of those need to be redesigned for v0.2.
-
----
-
 ## 1. v0.2 — Transaction notifications
 
 ### 1.1 Goal and scope
@@ -35,7 +12,7 @@ confirmations.
   `sync()` and a full catch-up on startup are required.
 - SQLite remains the storage backend. PostgreSQL is not part of v0.2 unless the
   deferred decision in §1.2 changes that.
-- The v0.1 IBD monitor keeps working unchanged.
+- The lean IBD monitor keeps working unchanged.
 
 ### 1.2 Open decisions
 
@@ -147,12 +124,11 @@ scan history.
 | `/cancel <txid>` | Stop watching |
 | `/status` | Admin: node height, last ZMQ event, pending count |
 
-The existing `/start`, `/help` and `/ibd …` commands stay as they are.
+The existing `/start`, `/help`, `/ibd` and `/ibd stop` commands stay as they are.
 
 ### 1.9 Configuration additions
 
-The current config schema already accepts `bitcoin.pollIntervalSeconds` and the
-`watches` block as reserved fields; v0.2 will start consuming them.
+The current config has no reserved fields, so v0.2 adds these blocks:
 
 ```yaml
 bitcoin:
@@ -179,9 +155,8 @@ The ZMQ endpoint stays loopback-only, like RPC.
 
 ### 1.10 Storage changes
 
-Add the following SQLite tables in a new migration; leave the existing
-`node_monitor_subscriptions` table keyed by `telegram_chat_id` so v0.1 data needs
-no rewrite.
+Add the following SQLite tables in a new migration. Leave `monitored_chats` as it
+is; the IBD monitor needs no changes.
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
@@ -267,27 +242,16 @@ CREATE TABLE chain_state (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE node_monitor_subscriptions (
-  id                    BIGSERIAL PRIMARY KEY,
-  user_id               BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-  progress_step_percent SMALLINT NOT NULL DEFAULT 10
-                          CHECK (progress_step_percent BETWEEN 1 AND 50),
-  active                BOOLEAN NOT NULL DEFAULT true,
-  last_state            TEXT NOT NULL DEFAULT 'unknown'
-                          CHECK (last_state IN ('unknown','ibd','synced','stalled','regressed','unreachable')),
-  last_sent_progress    DOUBLE PRECISION,
-  last_sent_at          TIMESTAMPTZ,
-  last_alert_at         TIMESTAMPTZ,
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE monitored_chats (
+  chat_id          BIGINT PRIMARY KEY,
+  last_state       TEXT NOT NULL DEFAULT 'unknown'
+                     CHECK (last_state IN ('unknown','ibd','synced','unreachable')),
+  last_sent_bucket INTEGER,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE INDEX node_monitor_subscriptions_active
-  ON node_monitor_subscriptions (active) WHERE active;
 ```
 
-Sample history stays in memory for ETA. Add a `node_monitor_samples` table only
-if historical dashboards are wanted later.
+Sample history stays out of the database; the lean monitor has no samples.
 
 ### 1.11 Tests and acceptance
 
@@ -319,18 +283,14 @@ if historical dashboards are wanted later.
 These are not required for v0.2 and can be scheduled independently.
 
 - **Prometheus metrics for the IBD monitor**: `ibd_blocks`, `ibd_headers`,
-  `ibd_progress`, `ibd_peers`, `ibd_stalled_total`, `ibd_rpc_errors_total`.
-  Logging already covers per-sample and state-transition events.
-- **Assumeutxo completion guard**: `isNodeSynced()` currently follows decision
-  Q7 and does not wait for background validation. If the production node ever
-  starts using assumeutxo, completion must require the background chainstate's
-  `validated: true` (and the active chain at the tip).
-- **Stronger regression detection**: the monitor currently detects a reindex
-  from a block-height drop greater than `reorgTolerance`. If needed, also
-  compare `bestblockhash` against a much lower height.
+  `ibd_progress`, `ibd_peers`, `ibd_rpc_errors_total`. Logging already covers
+  per-sample and state-transition events.
+- **Assumeutxo completion guard** (only if the node ever uses assumeutxo):
+  completion would need to require the background chainstate's `validated:
+  true`. The lean monitor deliberately ignores snapshot-based sync.
 - **Production acceptance on testnet/pruned mainnet**: a full IBD run with a
-  deliberate `bitcoind` restart and `setnetworkactive false` stall, if that has
-  not already been done on the target node.
+  deliberate `bitcoind` restart, if that has not already been done on the
+  target node.
 - **Golden-file message fixtures**: the formatting tests currently assert
   substrings; snapshot/golden files would catch accidental layout changes.
 
@@ -340,8 +300,8 @@ These are not required for v0.2 and can be scheduled independently.
 
 - Keep the existing systemd unit; add the ZMQ endpoint and optional `txindex`
   to `bitcoin.conf`, then restart `bitcoind`.
-- Add `bitcoin.zmq` and wire up the already-reserved `watches` block. The
-  defaults in `config/config.example.yaml` should be updated at the same time.
+- Add `bitcoin.zmq` and the `watches` block to the config schema. The defaults in
+  `config/config.example.yaml` should be updated at the same time.
 - SQLite migrations run automatically on startup (`PRAGMA user_version`). Back
   up with `VACUUM INTO` or `sqlite3 .backup` before deploying the migration.
 - Rollback: `/cancel` active watches, stop the service, and restore the

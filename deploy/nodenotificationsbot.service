@@ -27,7 +27,7 @@ ProtectHome=true
 
 # RPC auth uses a dedicated rpcauth user (see README):
 #   rpcauth=nodenotificationsbot:<salt>$<hash>
-#   rpcwhitelist=nodenotificationsbot:getblockchaininfo,getnetworkinfo,getblockheader,getchainstates
+#   rpcwhitelist=nodenotificationsbot:getblockchaininfo,getnetworkinfo
 #   rpcwhitelistdefault=0
 # The plaintext password lives in EnvironmentFile above, not in bitcoin.conf.
 # Never expose RPC port 8332 to the network.

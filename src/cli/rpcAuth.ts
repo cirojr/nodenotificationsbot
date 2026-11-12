@@ -59,7 +59,7 @@ function printCredential(credential: RpcauthCredential): void {
 ${credential.line}
 
 2. Optional: restrict this RPC user to the read-only methods the bot uses:
-rpcwhitelist=${credential.user}:getblockchaininfo,getnetworkinfo,getblockheader,getchainstates
+rpcwhitelist=${credential.user}:getblockchaininfo,getnetworkinfo
 rpcwhitelistdefault=0
 # rpcwhitelistdefault=0 restricts only the user above. On a dedicated node,
 # set it to 1 to deny every RPC user that is not listed.

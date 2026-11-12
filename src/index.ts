@@ -50,13 +50,12 @@ async function main(): Promise<void> {
   logger.info(
     {
       network: config.bitcoin.network,
-      storage: config.storage.driver,
-      ibdMonitorEnabled: config.ibdMonitor.enabled,
+      storage: config.storage.path,
     },
     'starting NodeNotificationsBot',
   );
 
-  const storage = createStorage(config.storage, logger);
+  const storage = createStorage(config.storage.path, logger);
   let storageClosed = false;
   const closeStorage = (): void => {
     if (storageClosed) {
@@ -83,8 +82,8 @@ async function main(): Promise<void> {
   const bot = createBot(config);
   const sender = createTelegramSender(bot);
   const monitor = new IbdMonitor({
-    repo: storage.repo,
-    sampler: new RpcNodeSampler(rpc, config.bitcoin.rpc.timeoutMs),
+    repo: storage.chats,
+    sampler: new RpcNodeSampler(rpc),
     sender,
     config: config.ibdMonitor,
     logger,
@@ -129,11 +128,7 @@ async function main(): Promise<void> {
     void shutdown('SIGTERM');
   });
 
-  if (config.ibdMonitor.enabled) {
-    monitor.start();
-  } else {
-    logger.info('ibd monitor disabled by config');
-  }
+  monitor.start();
 
   try {
     await bot.start({

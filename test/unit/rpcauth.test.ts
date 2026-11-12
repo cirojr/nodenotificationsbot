@@ -5,7 +5,6 @@ import {
   generateRpcauth,
   generateRpcauthPassword,
   generateRpcauthSalt,
-  parseRpcauthLine,
 } from '../../src/bitcoin/rpcauth';
 
 // Vector produced by Bitcoin Core's share/rpcauth/rpcauth.py.
@@ -21,7 +20,7 @@ describe('rpcauth', () => {
     );
   });
 
-  it('generates a parseable pair with a random salt and password', () => {
+  it('generates a pair with a random salt and password', () => {
     const credential = generateRpcauth('nodenotificationsbot');
 
     expect(credential.password.length).toBeGreaterThan(0);
@@ -30,11 +29,6 @@ describe('rpcauth', () => {
     expect(credential.hash).toBe(
       computeRpcauthHash(credential.salt, credential.password),
     );
-    expect(parseRpcauthLine(credential.line)).toEqual({
-      user: 'nodenotificationsbot',
-      salt: credential.salt,
-      hash: credential.hash,
-    });
   });
 
   it('uses a supplied password', () => {
@@ -49,11 +43,7 @@ describe('rpcauth', () => {
     expect(generateRpcauthPassword()).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it('rejects malformed lines, users, and passwords', () => {
-    expect(() => parseRpcauthLine('rpcuser=x')).toThrow(/expected rpcauth/);
-    expect(() => parseRpcauthLine(`rpcauth=bot:${SALT}$short`)).toThrow(
-      /expected rpcauth/,
-    );
+  it('rejects malformed users, passwords, and salts', () => {
     expect(() => generateRpcauth('bad user')).toThrow(/no colon or whitespace/);
     expect(() => generateRpcauth('bot', '')).toThrow(/must not be empty/);
     expect(() => computeRpcauthHash('not-a-salt', PASSWORD)).toThrow(
